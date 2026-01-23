@@ -1,14 +1,13 @@
 import datetime
 from datetime import date, timedelta
 
+# 自作モジュールのインポート
+import logic
+import notion_db
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-
-# 自作モジュールのインポート
-import logic
-import notion_db
 
 # ==========================================
 # 1. 初期設定 & シークレット読込
@@ -255,9 +254,9 @@ def main():
                     w_in,
                     note,
                     kcal=fk,
-                    p=fp,
-                    f=ff,
-                    c=fc,
+                    p=round(fp, 1),
+                    f=round(ff, 1),
+                    c=round(fc, 1),
                 )
                 st.success("Saved successfully!")
                 st.session_state.meal_cart = []  # 保存成功時にカートを空にする
@@ -380,13 +379,28 @@ def main():
             if curr > cfg_goal_weight and sim_d < 0:
                 est_days = int((curr - cfg_goal_weight) / abs(sim_d))
                 est_date_str = (date.today() + timedelta(days=est_days)).strftime(
-                    "%m/%d (Sim)"
+                    "%m/%d"
                 )
             else:
                 est_date_str = "∞"
 
         with sc3:
-            st.metric("AI Est. Date", est_date_str)
+            st.markdown(
+                f"""
+                <div style="
+                    background-color: rgba(255, 255, 255, 0.05);
+                    padding: 10px 20px;
+                    border-radius: 10px;
+                    border-left: 5px solid #F59E0B;
+                    margin-bottom: 20px;">
+                    <p style="margin: 0; font-size: 0.8rem; color: #888;">AI Est. Date</p>
+                    <p style="margin: 0; font-size: 1.5rem; font-weight: bold; color: #FFF;">
+                        {est_date_str} <span style="font-size: 1rem; font-weight: normal;">(Sim)</span>
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         # グラフ描画
         fig = go.Figure()
@@ -440,6 +454,7 @@ def main():
                 mode="markers",
                 name="Raw",
                 marker=dict(color="rgba(0, 191, 255, 0.4)", size=6),
+                hovertemplate="%{x|%Y-%m-%d}<br>Raw: %{y:.1f}kg<extra></extra>",
             )
         )
 
@@ -484,6 +499,52 @@ def main():
             ),
         )
         st.plotly_chart(fig, use_container_width=True)
+
+        # --- 追加：直近の体重推移テーブル ---
+        st.markdown("#### 📋 Recent Weight Logs")
+
+        # 1. データ抽出（前回推奨したパターンBを採用）
+        table_cols = ["ds", "y"]
+        if "Calories" in df.columns:
+            table_cols.append("Calories")
+
+        log_df = df[table_cols].copy()
+
+        # 2. 前日比の計算（昇順の状態で計算してから、表示用に降順へ）
+        log_df["Diff"] = log_df["y"].diff().round(2)
+        log_df = log_df.sort_values("ds", ascending=False).head(14)
+
+        # 3. 条件付き書式（Coloring Logic）の定義
+        def style_diff(val):
+            if pd.isna(val) or val == 0:
+                return ""
+            # プラスなら赤、マイナスなら青（エンジニア好みの明瞭な色指定）
+            color = "#FF4B4B" if val > 0 else "#1C83E1"
+            return f"color: {color}; font-weight: bold;"
+
+        # 4. Pandas Styler の適用
+        # format() メソッドで "+0.50 kg" の形式を担保し、applymapで色を塗る
+        styled_df = log_df.style.applymap(style_diff, subset=["Diff"]).format(
+            {
+                "y": "{:.1f} kg",
+                "Diff": "{:+.1f} kg",
+                "Calories": "{:,.0f} kcal" if "Calories" in log_df.columns else "{}",
+            }
+        )
+
+        # 5. Streamlitで表示
+        # column_config でヘッダー名を整える（Stylerを使う場合はformat指定はStyler側が優先されます）
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            column_config={
+                "ds": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
+                "y": "Weight",
+                "Diff": "ΔWeight",
+                "Calories": "Intake",
+            },
+            hide_index=True,
+        )
 
     # --- Tab 2: History ---
     with tab2:
@@ -751,6 +812,7 @@ def main():
                     stackgroup="one",
                     line=dict(width=0),
                     fillcolor="rgba(59, 130, 246, 0.7)",
+                    hovertemplate="Date: %{x|%Y-%m-%d}<br>Protein: %{y:.0f}%<extra></extra>",
                 )
             )
             fig_macro.add_trace(
@@ -762,6 +824,7 @@ def main():
                     stackgroup="one",
                     line=dict(width=0),
                     fillcolor="rgba(234, 179, 8, 0.7)",
+                    hovertemplate="Date: %{x|%Y-%m-%d}<br>Fat: %{y:.0f}%<extra></extra>",
                 )
             )
             fig_macro.add_trace(
@@ -773,6 +836,7 @@ def main():
                     stackgroup="one",
                     line=dict(width=0),
                     fillcolor="rgba(16, 185, 129, 0.7)",
+                    hovertemplate="Date: %{x|%Y-%m-%d}<br>Carbs: %{y:.0f}%<extra></extra>",
                 )
             )
 
@@ -803,6 +867,7 @@ def main():
                     name="TDEE",
                     line=dict(color="#F59E0B", width=3),
                     fill="tozeroy",
+                    hovertemplate="Date: %{x|%Y-%m-%d}<br>TDEE: %{y:.0f} kcal<extra></extra>",
                 )
             )
             fig4.add_trace(
@@ -812,6 +877,7 @@ def main():
                     mode="lines",
                     name="Intake",
                     line=dict(color="#10B981", width=2, dash="dot"),
+                    hovertemplate="Date: %{x|%Y-%m-%d}<br>Intake: %{y:.0f} kcal<extra></extra>",
                 )
             )
             fig4.update_layout(

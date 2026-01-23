@@ -15,30 +15,28 @@ def enrich_data(df, target_date_obj):
     df = df.drop_duplicates(subset=["ds"], keep="last")
 
     # 1. TDEE Reverse Engineering
-    # 欠損日を埋めて計算しやすくする
+    # 欠損日を埋めて計算精度を安定させる
     df_c = df.set_index("ds").asfreq("D").ffill().reset_index()
 
-    # 移動平均 (Weight & Calories)
-    df_c["w_ma"] = df_c["y"].rolling(7, 1).mean()
+    # 7日間移動平均 (Weight & Calories) でノイズ（水分等）を除去 10日に変更
+    df_c["w_ma"] = df_c["y"].rolling(window=10, min_periods=1).mean()
 
-    # ★修正箇所: カラム名を 'cal' から 'Calories' に変更 (notion_dbと合わせる)
-    # カラムが存在しない場合の安全策として .get を使うか、事前に確認する
     if "Calories" in df_c.columns:
-        df_c["c_ma"] = df_c["Calories"].rolling(7, 1).mean()
+        df_c["c_ma"] = df_c["Calories"].rolling(window=10, min_periods=1).mean()
     else:
-        # 万が一カラムがない場合は0埋め (エラー回避)
         df_c["c_ma"] = 0
 
-    df_c["w_delta"] = df_c["w_ma"].diff()
+    # 【重要】7日平均体重の「前日との差」をとる
+    # これにより、単日の跳ね上がりを抑えた「真の体重推移」が得られる
+    df_c["w_delta_smooth"] = df_c["w_ma"].diff()
 
-    # TDEE = Intake - (Delta * 7200)
-    df_c["real_tdee"] = df_c["c_ma"] - (df_c["w_delta"] * 7200)
+    # TDEE = 摂取カロリー平均 - (平均体重の変化量 * 7200kcal) 6800kcalに修正
+    df_c["real_tdee"] = df_c["c_ma"] - (df_c["w_delta_smooth"] * 6800)
 
-    # さらに平滑化してトレンドを見る (14日平均)
-    df_c["real_tdee_smooth"] = df_c["real_tdee"].rolling(14, 1).mean()
+    # グラフ表示用にさらに平滑化（トレンドを可視化）
+    df_c["real_tdee_smooth"] = df_c["real_tdee"].rolling(window=7, min_periods=1).mean()
 
-    # 計算結果を元のデータフレームに結合
-    # c_ma (摂取カロリー平均) も可視化用に結合
+    # 計算結果を元のデータフレームにマージ
     df = pd.merge(df, df_c[["ds", "real_tdee_smooth", "c_ma"]], on="ds", how="left")
 
     # 2. Days Out (大会までの日数)
