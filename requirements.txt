@@ -1,7 +1,6 @@
 streamlit
 pandas
-numpy
-notion-client
-scikit-learn
-prophet
+numpy<2.0.0
 plotly
+notion-client
+prophet
