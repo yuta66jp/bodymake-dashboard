@@ -98,7 +98,7 @@ CREATE TABLE daily_logs (
 ### 2. Local Environment
 ```bash
 # Clone & Enter
-git clone [https://github.com/yuuta66jp/bodymake-dashboard.git](https://github.com/yuuta66jp/bodymake-dashboard.git)
+git clone [https://github.com/yuta66jp/bodymake-dashboard.git](https://github.com/yuta66jp/bodymake-dashboard.git)
 cd bodymake-dashboard
 
 # Venv Setup
@@ -132,7 +132,7 @@ streamlit run app.py
 
 ## 👤 Author
 
-* **Created by:** `yuuta66jp`
+* **Created by:** `yuta66jp`
 * **Goal:** 2027 Japan Class-Specific Bodybuilding Championship 🥇
 
 ---
