@@ -1,28 +1,28 @@
-# ⚡ Body Composition Tracker (AI-Powered)
+# ⚡ Body Composition Tracker (Supabase Edition)
 
-Notionをバックエンドデータベースとして活用し、機械学習（Prophet）を用いた体重予測とTDEE（総消費カロリー）の逆算分析を行う、ボディメイク最適化ダッシュボードです。
+**Supabase (PostgreSQL)** をバックエンドデータベースとして活用し、機械学習（Prophet）を用いた体重予測とTDEE（総消費カロリー）の逆算分析を行う、ボディメイク最適化ダッシュボードです。
 
-減量（Cut）や増量（Bulk）の進捗を可視化し、**「いつ目標を達成できるか」**を論理的にシミュレーションします。
+以前のNotion版からアーキテクチャを刷新し、**RDBによる堅牢な型定義、高速なクエリ応答、およびスケーラビリティ**を実現しました。減量（Cut）や増量（Bulk）の進捗を可視化し、論理的なシミュレーションを提供します。
 
 ## 🚀 Key Features
 
 ### 1. 🔮 AI & Statistical Forecasting
 * **Prophet (Meta社製AI):** 過去の体重変動トレンドや周期性を学習し、現実的な未来の体重推移を予測。
 * **Linear Regression:** 単純な線形回帰トレンドも併記し、AI予測との乖離を確認可能。
-* **Simulated Projection:** 「もし毎日2000kcalで過ごしたら？」という理論値を計算し、AI予測（現実）と比較することで、計画の実行可能性を評価。
+* **Simulated Projection:** 「設定した摂取カロリーで生活した場合」の理論値を計算し、AI予測と比較することで計画の妥当性を評価。
 
-### 2. 📊 TDEE Reverse Engineering
-* **Logic:** 毎日の「摂取カロリー」と「体重変動（7日移動平均）」から、実質的なメンテナンスカロリー（TDEE）を逆算。
-* **Formula:** $TDEE = Intake - (\Delta Weight \times 7200kcal)$
-* これにより、計算上のTDEEではなく、**「今の自分の代謝実測値」**に基づいたカロリー設定が可能。
+### 2. 📊 TDEE Reverse Engineering (Real-time Metabolism)
+* **Logic:** 毎日の「摂取カロリー」と「体重変動（10日移動平均）」から、実質的なメンテナンスカロリー（TDEE）を逆算。
+* **Formula:** $TDEE = Intake - (\Delta Weight_{avg} \times 7200kcal)$
+* 計算上の推定値ではなく、**「今の自分の代謝実測値」**に基づいたカロリー設定が可能。
 
-### 3. 🍱 Notion-Integrated Food Log
-* **Daily Log:** 食品マスタから選択、またはクイック入力で食事を記録。Notionデータベースへリアルタイム同期。
-* **Menu Master:** 「朝食Aセット」のような定型セットメニューをJSON形式でNotionに保存し、ワンクリックで展開・登録可能。
-* **Macro Analytics:** PFCバランス（タンパク質・脂質・炭水化物）の比率を可視化。
+### 3. 🍱 SQL-Based Food Log
+* **Structured Data:** PostgreSQLの正規化されたテーブル構造により、データの整合性を担保。
+* **Menu Master (JSONB):** セットメニューのレシピ構造を `JSONB` 型で保存。NoSQLのような柔軟性とSQLの検索性を両立。
+* **Macro Analytics:** PFCバランスの比率や週次推移を高速に集計・可視化。
 
-### 4. 📱 Mobile First Design
-* スマホでの操作に最適化。ホーム画面に追加することで、ネイティブアプリのような全画面UXを提供。
+### 4. 📱 Mobile First & High Performance
+* Streamlit × Supabase の構成により、旧来のAPI連携と比較してデータ読み込み速度が劇的に向上。ネイティブアプリのようなUXを提供。
 
 ## 🛠 Tech Stack
 
@@ -30,7 +30,7 @@ Notionをバックエンドデータベースとして活用し、機械学習�
 | --- | --- |
 | **Frontend** | [Streamlit](https://streamlit.io/) |
 | **Visualization** | [Plotly](https://plotly.com/) |
-| **Backend / DB** | [Notion API](https://developers.notion.com/) |
+| **Backend / DB** | [Supabase](https://supabase.com/) (PostgreSQL) |
 | **Data Analysis** | [Pandas](https://pandas.pydata.org/), [NumPy](https://numpy.org/) |
 | **Machine Learning** | [Prophet](https://facebook.github.io/prophet/), [Scikit-learn](https://scikit-learn.org/) |
 | **Environment** | Python 3.11 |
@@ -38,95 +38,97 @@ Notionをバックエンドデータベースとして活用し、機械学習�
 ## 📂 Project Structure
 
 ```text
-├── app.py                # Main Application (UI)
-├── logic.py              # Data Analysis & AI Logic
-├── notion_db.py          # Notion API Wrapper (CRUD)
-├── import_data.py        # CSV Import Utility
+├── app.py                # Main Application (UI / Controller)
+├── logic.py              # Data Analysis & AI Logic (Model)
+├── supabase_db.py        # Database Adapter (Supabase Client)
 ├── requirements.txt      # Dependencies
 └── .streamlit/
     └── secrets.toml      # API Keys (Git-ignored)
 ```
 
-## 🗄️ Database Schema (Notion)
+## 🗄️ Database Schema (PostgreSQL)
 
-本アプリはNotion上に以下の4つのデータベースを必要とします。
+本アプリはSupabase上に以下のテーブル構造を必要とします。
 
-1.  **Daily Log DB** (日々の記録)
-    * `Date` (Date)
-    * `Weight` (Number)
-    * `Calories` (Number)
-    * `Protein`, `Fat`, `Carbs` (Number)
-    * `Note` (Text)
+1.  **daily_logs** (日々の記録)
+    * `log_date` (DATE, PK): 記録日
+    * `weight` (NUMERIC): 体重
+    * `calories`, `protein`, `fat`, `carbs` (NUMERIC): 栄養素
+    * `note` (TEXT): メモ
 
-2.  **Food Master DB** (食品マスタ)
-    * `Name` (Title)
-    * `Calories` (Number)
-    * `Protein`, `Fat`, `Carbs` (Number)
+2.  **food_master** (食品マスタ)
+    * `id` (UUID, PK)
+    * `name` (TEXT, Unique): 食品名
+    * `calories`, `protein`, `fat`, `carbs`: 栄養成分
 
-3.  **Menu Master DB** (セットメニュー保存)
-    * `Name` (Title)
-    * `Recipe` (Text/JSON) - ※セット内容をJSON形式で格納
+3.  **menu_master** (セットメニュー)
+    * `id` (UUID, PK)
+    * `name` (TEXT, Unique): セット名
+    * `recipe` (**JSONB**): 食品IDと量のリスト構造
 
-4.  **Settings DB** (設定値管理)
-    * `Key` (Title) - 例: "target_weight", "current_phase"
-    * `Value` (Number)
-    * `ValueStr` (Text)
+4.  **settings** (設定値 - Key-Value Store)
+    * `key` (TEXT, PK): 設定キー ("target_weight" 等)
+    * `value_num` (NUMERIC): 数値設定
+    * `value_str` (TEXT): 文字列設定
 
-## 🚀 Installation
+## 🚀 Installation & Setup
 
-推奨環境: Python 3.11 (Prophetの互換性維持のため)
+### 1. Supabase Setup
+Supabaseプロジェクトを作成し、SQL Editorで以下の初期化クエリを実行してテーブルを作成してください。
 
+```sql
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Create Tables
+CREATE TABLE daily_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    log_date DATE UNIQUE NOT NULL,
+    weight NUMERIC(5, 2) NOT NULL,
+    calories INTEGER DEFAULT 0,
+    protein NUMERIC(5, 1) DEFAULT 0,
+    fat NUMERIC(5, 1) DEFAULT 0,
+    carbs NUMERIC(5, 1) DEFAULT 0,
+    note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- (以下、food_master, menu_master, settings も同様に作成)
+```
+
+### 2. Local Environment
 ```bash
-# 1. Clone the repository
-git clone [https://github.com/yuuta66jp/bodymake-dashboard.git](hhttps://github.com/yuuta66jp/bodymake-dashboard.git)
+# Clone & Enter
+git clone [https://github.com/yuuta66jp/bodymake-dashboard.git](https://github.com/yuuta66jp/bodymake-dashboard.git)
 cd bodymake-dashboard
-```
 
-# 2. Create virtual environment
-```bash
+# Venv Setup
 python -m venv venv
-source venv/bin/activate  # Mac/Linux
-# venv\Scripts\activate   # Windows
-```
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 3. Install dependencies
-```bash
+# Install Dependencies
 pip install -r requirements.txt
 ```
-
-### Configuration
-ルートディレクトリに `.streamlit/secrets.toml` を作成し、APIキーを設定してください。
+### 3. Configuration (Secrets)
+ルートディレクトリに `.streamlit/secrets.toml` を作成し、Supabaseの接続情報を記述します。
 
 ```toml
-NOTION_TOKEN = "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"       # Daily Log
-FOOD_DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # Food Master
-MENU_DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # Menu Master
-SETTINGS_DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx" # Settings
+[connections.supabase]
+SUPABASE_URL = "[https://your-project-id.supabase.co](https://your-project-id.supabase.co)"
+SUPABASE_KEY = "your-service-role-key-or-anon-key"
 ```
 
-### Run
-ローカル環境でアプリを起動します。
-
+### 4. Run
 ```bash
 streamlit run app.py
 ```
 
-## 🔄 Deployment
-
-本アプリは **Streamlit Cloud** に連携済みです。
-GitHubの `main` ブランチへプッシュすると、自動的にビルドとデプロイが実行されます。
+## 🔄 Deployment (Streamlit Community Cloud)
 
 1. **Push to GitHub:**
-   ```bash
-   git add .
-   git commit -m "Update app"
-   git push origin main
-   ```
+   `requirements.txt` に `supabase` と `scikit-learn` が含まれていることを確認してプッシュします。
 
-2. **Streamlit Cloud:**
-GitHubへのプッシュを自動検知し、数分で最新版が本番環境に反映されます。
-デプロイ状況は Streamlit Cloud 管理画面の "Manage app" から確認できます。
+2. **Configure Secrets:**
+   Streamlit CloudのDashboard設定画面（App Settings > Secrets）にて、ローカルの `secrets.toml` と同じ内容を設定してください。
 
 ## 👤 Author
 
