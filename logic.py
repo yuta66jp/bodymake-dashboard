@@ -95,5 +95,6 @@ def run_linear_model(df, target_date):
     tgt_dt = pd.to_datetime(target_date)
     tgt_d = (tgt_dt - start).total_seconds() / 86400
 
-    pred = model.predict([[tgt_d]])[0]
+    X_pred = pd.DataFrame({"d": [tgt_d]})
+    pred = model.predict(X_pred)[0]
     return pred

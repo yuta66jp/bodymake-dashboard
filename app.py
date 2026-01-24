@@ -483,19 +483,43 @@ def main():
                 annotation_text="Monthly Target",
             )
 
+        # 1. 基準となる日付の取得（すでにmain内で定義済みの変数を使用）
+        # cfg_goal_date は datetime.date型なので、計算のためにTimestamp型に変換します
+        target_date_ts = pd.to_datetime(cfg_goal_date)
+
+        # 2. 表示範囲の計算
+        # 開始点：最新データから1ヶ月前（直近の進捗をズーム）
+        latest_data_date = df["ds"].max()
+        start_date = latest_data_date - pd.DateOffset(months=1)
+
+        # 終端点：大会当日の「15日後」に設定
+        # これにより、大会当日を過ぎた後の推移予測や、当日の達成感を視覚的に確保します
+        graph_end_date = target_date_ts + pd.DateOffset(days=15)
+
+        # --- 1. Y軸の表示範囲を動的に計算 ---
+        # 目標体重（例: 58.0kg）から2kg引いた値を下限に設定
+        yaxis_min = float(cfg_goal_weight) - 2.0
+        # データ内の最大値に少し余白（2.5kg）を足して上限に設定
+        yaxis_max = df["y"].max() + 2.5
+
         fig.update_layout(
             height=500,
             template="plotly_dark",
             margin=dict(l=20, r=20, t=20, b=20),
             legend=dict(orientation="h", y=1.05),
             xaxis=dict(
-                tickformat="%Y-%m",
-                dtick="M1",
-                showgrid=True,
-                gridcolor="rgba(128,128,128, 0.2)",
+                range=[start_date, graph_end_date],  # 初期ズーム
+                type="date",
+                rangeslider=dict(visible=True),  # ナビゲーションを確保
+                showgrid=True,  # グリッドを表示
+                gridcolor="rgba(128,128,128, 0.2)",  # 視覚的なノイズを抑制
             ),
             yaxis=dict(
-                tickformat=".1f", showgrid=True, gridcolor="rgba(128,128,128, 0.2)"
+                range=[yaxis_min, yaxis_max],
+                tickformat=".1f",
+                dtick=2.5,
+                showgrid=True,
+                gridcolor="rgba(128,128,128, 0.2)",
             ),
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -523,8 +547,8 @@ def main():
             return f"color: {color}; font-weight: bold;"
 
         # 4. Pandas Styler の適用
-        # format() メソッドで "+0.50 kg" の形式を担保し、applymapで色を塗る
-        styled_df = log_df.style.applymap(style_diff, subset=["Diff"]).format(
+        # format() メソッドで "+0.50 kg" の形式を担保し、mapで色を塗る
+        styled_df = log_df.style.map(style_diff, subset=["Diff"]).format(
             {
                 "y": "{:.1f} kg",
                 "Diff": "{:+.1f} kg",
@@ -624,6 +648,174 @@ def main():
                 ),
             )
             st.plotly_chart(fig2, use_container_width=True)
+
+            # ========================================================
+            # 【NEW】 📅 YoY Comparison Table (YYYY-MM-DD & Descending)
+            # ========================================================
+            st.markdown("### 📅 Recent 14 Days Comparison (Actual vs Past)")
+
+            # 1. データ整理（日付順）
+            df_sorted = df.sort_values("ds")
+
+            if not df_sorted.empty:
+                target_date_obj = cfg_goal_date
+                current_date_val = df_sorted["ds"].iloc[-1].date()
+
+                # 2. 表示したい日付リスト（今日 〜 13日前）
+                date_objects = [current_date_val - timedelta(days=i) for i in range(14)]
+
+                # 3. ベースのデータフレーム作成
+                comp_df = pd.DataFrame({"DateObj": date_objects})
+
+                # 【修正1】フォーマットを YYYY-MM-DD に変更
+                comp_df["2026 Date"] = comp_df["DateObj"].apply(
+                    lambda d: d.strftime("%Y-%m-%d")
+                )
+
+                comp_df["Days Remaining"] = comp_df["DateObj"].apply(
+                    lambda d: (target_date_obj - d).days
+                )
+
+                # ----------------------------------------------------
+                # A. 今年の実績 (2026 Actual) を結合
+                # ----------------------------------------------------
+                df_sorted["date_obj"] = df_sorted["ds"].dt.date
+
+                comp_df = comp_df.merge(
+                    df_sorted[["date_obj", "y"]].rename(
+                        columns={"y": "2026 Actual", "date_obj": "DateObj"}
+                    ),
+                    on="DateObj",
+                    how="left",
+                )
+
+                # ----------------------------------------------------
+                # B. 過去の実績 (Past Years) を結合
+                # ----------------------------------------------------
+                past_labels = []
+
+                if hist_df is not None and not hist_df.empty:
+                    # 日付型変換とフォーマット
+                    hist_df["Date"] = pd.to_datetime(hist_df["Date"])
+                    # 【修正1】フォーマットを YYYY-MM-DD に変更
+                    hist_df["date_str"] = hist_df["Date"].dt.strftime("%Y-%m-%d")
+
+                    hist_df["join_key"] = hist_df["days_out"].astype(int)
+
+                    # 符号判定
+                    sample_val = (
+                        hist_df["days_out"].dropna().iloc[0]
+                        if not hist_df["days_out"].dropna().empty
+                        else 0
+                    )
+                    is_negative_hist = sample_val < 0
+
+                    if is_negative_hist:
+                        comp_df["join_key_hist"] = -1 * comp_df["Days Remaining"]
+                    else:
+                        comp_df["join_key_hist"] = comp_df["Days Remaining"]
+
+                    # Pivot
+                    pivot_weight = hist_df.pivot_table(
+                        index="join_key",
+                        columns="Label",
+                        values="Weight",
+                        aggfunc="mean",
+                    )
+                    pivot_date = hist_df.pivot_table(
+                        index="join_key",
+                        columns="Label",
+                        values="date_str",
+                        aggfunc="first",
+                    )
+
+                    past_labels = list(pivot_weight.columns)
+                    # 【修正2】新しい年が左に来るように降順ソート (2025 -> 2024 -> ...)
+                    past_labels.sort(reverse=True)
+
+                    # 結合
+                    comp_df = comp_df.merge(
+                        pivot_weight,
+                        left_on="join_key_hist",
+                        right_index=True,
+                        how="left",
+                    )
+                    comp_df = comp_df.merge(
+                        pivot_date.add_suffix("_Date"),
+                        left_on="join_key_hist",
+                        right_index=True,
+                        how="left",
+                    )
+
+                # ----------------------------------------------------
+                # C. 差分計算 & 表示設定
+                # ----------------------------------------------------
+                def format_diff_row(row, label_name):
+                    past_val = row[label_name]
+                    current_val = row["2026 Actual"]
+
+                    if pd.isna(past_val):
+                        weight_str = "-"
+                    elif pd.isna(current_val):
+                        weight_str = f"{past_val:.1f}"
+                    else:
+                        diff = current_val - past_val
+                        weight_str = f"{past_val:.1f} ({diff:+.1f})"
+                    return weight_str
+
+                display_cols = ["Days Remaining", "2026 Date", "2026 Actual"]
+
+                # 【修正3】日付が見切れないように width="medium" に変更
+                col_config = {
+                    "Days Remaining": st.column_config.NumberColumn(
+                        "Days Out", format="%d", width="small"
+                    ),
+                    "2026 Date": st.column_config.TextColumn("Date", width="medium"),
+                    "2026 Actual": st.column_config.NumberColumn(
+                        "🔥 Actual", format="%.1f kg", width="small"
+                    ),
+                }
+
+                # 降順ソートされた過去ラベル順にカラムを追加
+                for label in past_labels:
+                    date_col = f"{label}_Date"
+                    weight_col = label
+                    disp_weight_col = f"{label} Weight"
+
+                    if date_col in comp_df.columns:
+                        comp_df[date_col] = comp_df[date_col].fillna("-")
+
+                    if weight_col in comp_df.columns:
+                        comp_df[disp_weight_col] = comp_df.apply(
+                            lambda r: format_diff_row(r, weight_col), axis=1
+                        )
+
+                    display_cols.append(date_col)
+                    display_cols.append(disp_weight_col)
+
+                    year_prefix = label.split("_")[0] if "_" in label else label
+
+                    col_config[date_col] = st.column_config.TextColumn(
+                        f"{year_prefix} Date",
+                        width="medium",  # mediumへ拡大
+                    )
+                    col_config[disp_weight_col] = st.column_config.TextColumn(
+                        f"{year_prefix} Weight", width="medium"
+                    )
+
+                # ----------------------------------------------------
+                # D. テーブル表示
+                # ----------------------------------------------------
+                final_df = comp_df[display_cols]
+
+                st.dataframe(
+                    final_df,
+                    use_container_width=True,
+                    column_config=col_config,
+                    hide_index=True,
+                )
+            else:
+                st.warning("Daily logs are empty.")
         else:
             st.info("No history.csv found.")
 
@@ -850,6 +1042,122 @@ def main():
         else:
             st.info("No Macro data available yet.")
 
+        # ========================================================
+        # 【NEW】 🥦 Daily Nutrition Breakdown (Compact & Updated)
+        # ========================================================
+        st.subheader("🥦 Daily Nutrition Breakdown")
+
+        # 1. 各栄養素の上限値設定 (Goal Setting: Updated)
+        # ----------------------------------------------------
+        # Target: 2500 kcal
+        # Balance: P(200g) : F(60g) : C(295g)
+        # ※ 脂質を10g減らし(90kcal)、炭水化物を約22g追加(88kcal)
+        # ----------------------------------------------------
+        LIMIT_CAL = 2500
+        LIMIT_P = 200
+        LIMIT_F = 50  # 70g -> 60g に減量
+        LIMIT_C = 320  # 270g -> 295g に増量 (約 +25g)
+
+        # 2. カラム探索とデータ抽出
+        target_cols = ["ds", "Calories"]
+        p_key = next((k for k in ["P", "Protein", "p"] if k in df.columns), None)
+        f_key = next((k for k in ["F", "Fat", "f"] if k in df.columns), None)
+        c_key = next((k for k in ["C", "Carbs", "c"] if k in df.columns), None)
+
+        if p_key and f_key and c_key:
+            target_cols.extend([p_key, f_key, c_key])
+            nutri_df = (
+                df[target_cols].copy().sort_values("ds", ascending=False).head(14)
+            )
+            nutri_df = nutri_df.fillna(0)
+
+            # 3. 表示用データの整形（g と % の結合ロジック）
+            cal_safe = nutri_df["Calories"].replace(0, 1)
+
+            def format_pfc(row, key, cal_factor):
+                g_val = row[key]
+                pct = (
+                    (g_val * cal_factor / row["Calories"] * 100)
+                    if row["Calories"] > 0
+                    else 0
+                )
+                # Python f-string で "100.0g (50%)" の形式を作成
+                return f"{g_val:.1f}g ({pct:.0f}%)"
+
+            # 新しい表示用カラムを作成 (Apply関数で全行処理)
+            nutri_df["P_disp"] = nutri_df.apply(
+                lambda x: format_pfc(x, p_key, 4), axis=1
+            )
+            nutri_df["F_disp"] = nutri_df.apply(
+                lambda x: format_pfc(x, f_key, 9), axis=1
+            )
+            nutri_df["C_disp"] = nutri_df.apply(
+                lambda x: format_pfc(x, c_key, 4), axis=1
+            )
+
+            # 4. 表示用データフレームの構築
+            # 元の数値データ(g)はバー表示用に残しつつ、テキスト表示用には結合した文字列を使う
+            display_df = nutri_df[
+                [
+                    "ds",
+                    "Calories",
+                    p_key,
+                    "P_disp",  # 数値(バー用) と 文字列(テキスト用)
+                    f_key,
+                    "F_disp",
+                    c_key,
+                    "C_disp",
+                ]
+            ]
+
+            # 5. テーブル描画
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                column_config={
+                    "ds": st.column_config.DateColumn(
+                        "Date", format="YYYY-MM-DD", width="small"
+                    ),
+                    # --- Calories ---
+                    "Calories": st.column_config.ProgressColumn(
+                        f"Energy (Max: {LIMIT_CAL})",
+                        format="%d",  # カロリーはそのまま数値表示でOK
+                        min_value=0,
+                        max_value=LIMIT_CAL,
+                        width="medium",
+                    ),
+                    # --- Protein ---
+                    # 【修正】format=" " (半角スペース) を指定して、バーの横の数値を消す
+                    p_key: st.column_config.ProgressColumn(
+                        f"Protein (Max: {LIMIT_P})",
+                        format=" ",
+                        max_value=LIMIT_P,
+                        width="small",
+                    ),
+                    # 【修正】ヘッダーを空白文字 "" にして、左のバーと一体化しているように見せる
+                    "P_disp": st.column_config.TextColumn("", width="small"),
+                    # --- Fat ---
+                    f_key: st.column_config.ProgressColumn(
+                        f"Fat (Max: {LIMIT_F})",
+                        format=" ",
+                        max_value=LIMIT_F,
+                        width="small",
+                    ),
+                    "F_disp": st.column_config.TextColumn("", width="small"),
+                    # --- Carbs ---
+                    c_key: st.column_config.ProgressColumn(
+                        f"Carbs (Max: {LIMIT_C})",
+                        format=" ",
+                        max_value=LIMIT_C,
+                        width="small",
+                    ),
+                    "C_disp": st.column_config.TextColumn("", width="small"),
+                },
+                hide_index=True,
+            )
+        else:
+            st.info("PFC data columns not found.")
+
     # --- Tab 5: Metabolism ---
     with tab5:
         if "real_tdee_smooth" in df.columns:
@@ -884,6 +1192,55 @@ def main():
                 height=450, template="plotly_dark", yaxis=dict(range=[1000, 4000])
             )
             st.plotly_chart(fig4, use_container_width=True)
+
+            # ========================================================
+            # 【NEW】 📋 TDEE vs Intake Table
+            # ========================================================
+            st.markdown("### 📋 Daily TDEE & Intake Log")
+
+            # 1. データ抽出 (日付, 摂取カロリー, 推定TDEE, カロリー収支)
+            # TDEEが計算されている行だけに絞り込み、新しい日付順にソート
+            tdee_table_df = df[["ds", "Calories", "real_tdee_smooth"]].copy()
+            tdee_table_df = tdee_table_df.dropna(
+                subset=["real_tdee_smooth"]
+            ).sort_values("ds", ascending=False)
+
+            # 2. 差分(Balance)の計算: Intake - TDEE
+            # プラスならオーバーカロリー、マイナスならアンダーカロリー
+            tdee_table_df["balance"] = (
+                tdee_table_df["Calories"] - tdee_table_df["real_tdee_smooth"]
+            )
+
+            # 3. テーブル表示
+            st.dataframe(
+                tdee_table_df,
+                use_container_width=True,
+                column_config={
+                    "ds": st.column_config.DateColumn(
+                        "Date", format="YYYY-MM-DD", width="small"
+                    ),
+                    "Calories": st.column_config.NumberColumn(
+                        "Intake", format="%d kcal", width="small"
+                    ),
+                    "real_tdee_smooth": st.column_config.NumberColumn(
+                        "Real TDEE",
+                        format="%d kcal",
+                        width="small",
+                        help="体重変化から逆算された実質の消費カロリー",
+                    ),
+                    # 収支(Balance)をバーで可視化
+                    # 赤(正): 食べ過ぎ / 青(負): 絞れている
+                    "balance": st.column_config.ProgressColumn(
+                        "Balance",
+                        format="%+d kcal",  # +200, -300 のように符号を表示
+                        min_value=-1000,
+                        max_value=1000,
+                        width="medium",
+                        help="Intake - TDEE (マイナスが脂肪燃焼中)",
+                    ),
+                },
+                hide_index=True,
+            )
 
     # --- Tab 6: Database (Food & Menu) ---
     with tab6:
