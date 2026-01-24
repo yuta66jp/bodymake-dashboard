@@ -1,12 +1,13 @@
 import datetime
 from datetime import date, timedelta
 
-# 自作モジュールのインポート: notion_db を supabase_db に変更
-import logic
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+# 自作モジュールのインポート: notion_db を supabase_db に変更
+import logic
 import supabase_db
 
 # ==========================================
@@ -1118,9 +1119,12 @@ def main():
                         st.error("Name is required")
 
         # B. Set Menu
+        # --- B. セットメニュー編集 (Load / Edit / Save) ---
         with col_set:
             with st.container(border=True):
                 st.subheader("🍽 Menu Editor")
+
+                # データ準備
                 try:
                     current_foods = supabase_db.fetch_food_list()
                     food_names = list(current_foods.keys())
@@ -1130,6 +1134,7 @@ def main():
                     existing_menus = {}
                     current_foods = {}
 
+                # 1. Load Existing Set
                 c_load_sel, c_load_btn = st.columns([3, 1])
                 load_target = c_load_sel.selectbox(
                     "Load Existing Set",
@@ -1137,6 +1142,7 @@ def main():
                 )
                 if "edit_set_name" not in st.session_state:
                     st.session_state.edit_set_name = ""
+
                 if c_load_btn.button("📥 Load"):
                     if load_target != "(Select to Load)":
                         st.session_state.temp_set_items = existing_menus[load_target]
@@ -1145,46 +1151,120 @@ def main():
                         st.rerun()
 
                 st.divider()
+
+                # 2. Add Item
                 if "temp_set_items" not in st.session_state:
                     st.session_state.temp_set_items = []
+
                 c_sel, c_amt, c_btn = st.columns([3, 2, 1])
                 sel_food = c_sel.selectbox("Add Food", food_names, key="set_maker_food")
                 sel_amt = c_amt.number_input("g", 0, 2000, 100, 10, key="set_maker_amt")
+
                 if c_btn.button("Add"):
                     st.session_state.temp_set_items.append(
                         {"name": sel_food, "amount": sel_amt}
                     )
                     st.rerun()
 
+                # 3. List & Sort & Display
                 if st.session_state.temp_set_items:
                     st.markdown("---")
-                    st.caption("🧾 Recipe Content:")
-                    preview_cal = 0
+
+                    # --- 並び替え機能 (Sorting) ---
+                    c_head, c_sort = st.columns([2, 2])
+                    c_head.caption("🧾 Recipe Content:")
+
+                    sort_mode = c_sort.selectbox(
+                        "Sort by",
+                        ["Registered (Default)", "Calories", "Protein", "Fat", "Carbs"],
+                        label_visibility="collapsed",
+                        key="sort_mode_selector",
+                    )
+
+                    # 並び替えロジック (降順)
+                    if sort_mode != "Registered (Default)":
+                        # マッピング: 選択肢 -> current_foodsのキー
+                        key_map = {
+                            "Calories": "cal",
+                            "Protein": "p",
+                            "Fat": "f",
+                            "Carbs": "c",
+                        }
+                        target_key = key_map[sort_mode]
+
+                        def get_sort_value(item):
+                            fname = item["name"]
+                            if fname in current_foods:
+                                return current_foods[fname][target_key] * (
+                                    item["amount"] / 100
+                                )
+                            return 0
+
+                        # セッションステート内のリストを直接並び替え
+                        st.session_state.temp_set_items.sort(
+                            key=get_sort_value, reverse=True
+                        )
+
+                    # --- リスト表示 (PFC付き) ---
+                    total_cal = 0
+                    total_p, total_f, total_c = 0, 0, 0
+
                     for idx, item in enumerate(st.session_state.temp_set_items):
-                        cols = st.columns([4, 1])
+                        cols = st.columns([5, 1])
                         fname, famt = item["name"], item["amount"]
+
+                        # 数値計算
                         if fname in current_foods:
                             base = current_foods[fname]
-                            cal = int(base["cal"] * (famt / 100))
-                            preview_cal += cal
+                            ratio = famt / 100.0
+
+                            val_cal = int(base["cal"] * ratio)
+                            val_p = base["p"] * ratio
+                            val_f = base["f"] * ratio
+                            val_c = base["c"] * ratio
+
+                            # 合計加算
+                            total_cal += val_cal
+                            total_p += val_p
+                            total_f += val_f
+                            total_c += val_c
+
+                            # 表示テキスト作成: "名前 (100g) : 200kcal (P:20.0 F:5.0 C:30.0)"
+                            disp_text = (
+                                f"・{fname} ({famt}g) : **{val_cal}kcal** "
+                                f"<span style='color:#AAA; font-size:0.8em;'>"
+                                f"(P:{val_p:.1f} F:{val_f:.1f} C:{val_c:.1f})</span>"
+                            )
                         else:
-                            cal = 0
-                        cols[0].text(f"・{fname} ({famt}g) : {cal}kcal")
+                            val_cal = 0
+                            disp_text = f"・{fname} ({famt}g) : Unknown"
+
+                        # HTML許可でレンダリング (文字色調整のため)
+                        cols[0].markdown(disp_text, unsafe_allow_html=True)
+
                         if cols[1].button("🗑️", key=f"del_set_item_{idx}"):
                             st.session_state.temp_set_items.pop(idx)
                             st.rerun()
-                    st.markdown(f"**Total: approx. {preview_cal} kcal**")
 
+                    # 合計表示
+                    st.divider()
+                    st.markdown(
+                        f"**Total:** {total_cal} kcal "
+                        f"(P:{total_p:.1f} F:{total_f:.1f} C:{total_c:.1f})"
+                    )
+
+                    # 4. Save Form
                     with st.form("save_set_recipe"):
                         set_name = st.text_input(
                             "Set Name", value=st.session_state.edit_set_name
                         )
-                        if st.form_submit_button("💾 Save / Update"):
+                        if st.form_submit_button("💾 Save / Update", type="primary"):
                             if set_name and st.session_state.temp_set_items:
                                 supabase_db.save_menu_item(
                                     set_name, st.session_state.temp_set_items
                                 )
                                 st.success(f"Saved: {set_name}")
+                                # 保存後はクリア
                                 st.session_state.temp_set_items = []
                                 st.session_state.edit_set_name = ""
                                 st.rerun()
