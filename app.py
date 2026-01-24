@@ -66,7 +66,7 @@ def main():
     # Notion版から Supabase版へ変更 (引数不要)
     try:
         settings_data = supabase_db.fetch_settings()
-    except:
+    except Exception:
         settings_data = {}
 
     # --- デフォルト値と設定値の展開 ---
@@ -76,7 +76,7 @@ def main():
         cfg_goal_date = datetime.datetime.strptime(
             str(cfg_goal_date_str), "%Y-%m-%d"
         ).date()
-    except:
+    except Exception:
         cfg_goal_date = date(2026, 5, 30)
 
     # B. Phase (Cut / Bulk)
@@ -104,7 +104,7 @@ def main():
             food_list = sorted(list(food_dict.keys()))
             set_list = [f"[SET] {k}" for k in set_dict.keys()]
             menu_options = set_list + food_list
-        except:
+        except Exception:
             menu_options = []
             food_dict = {}
             set_dict = {}
@@ -529,18 +529,18 @@ def main():
             }
             DEFAULT_STYLE = dict(color="rgba(100, 100, 100, 0.3)", dash="dot", width=1)
 
-            for l in hist_df["Label"].unique():
+            for label in hist_df["Label"].unique():
                 s = hist_df[
-                    (hist_df["Label"] == l) & (hist_df["days_out"] > -dr)
+                    (hist_df["Label"] == label) & (hist_df["days_out"] > -dr)
                 ].sort_values("Date")
                 if not s.empty:
-                    style = STYLE_CONFIG.get(l, DEFAULT_STYLE)
+                    style = STYLE_CONFIG.get(label, DEFAULT_STYLE)
                     fig2.add_trace(
                         go.Scatter(
                             x=s["days_out"],
                             y=s["Weight"].rolling(7, 1).mean().round(1),
                             mode="lines",
-                            name=l,
+                            name=label,
                             line=style,
                             hovertemplate="<b>%{fullData.name}</b><br>Days Out: %{x}<br>Weight: %{y:.1f}kg<extra></extra>",
                         )
@@ -1125,7 +1125,7 @@ def main():
                     current_foods = supabase_db.fetch_food_list()
                     food_names = list(current_foods.keys())
                     existing_menus = supabase_db.fetch_menu_list()
-                except:
+                except Exception:
                     food_names = []
                     existing_menus = {}
                     current_foods = {}

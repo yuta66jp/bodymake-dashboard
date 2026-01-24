@@ -95,7 +95,7 @@ def fetch_history_csv():
         df["TargetDate"] = pd.to_datetime(df["TargetDate"])
         df["days_out"] = (df["Date"] - df["TargetDate"]).dt.days
         return df
-    except:
+    except Exception:
         return None
 
 
@@ -150,7 +150,7 @@ def fetch_settings():
             else:
                 settings[key] = item["value_str"]
         return settings
-    except:
+    except Exception:
         return {}
 
 
@@ -193,5 +193,5 @@ def fetch_menu_list():
             # item["recipe"] は既にPythonのリスト/辞書になっている
             menu_dict[item["name"]] = item["recipe"]
         return menu_dict
-    except:
+    except Exception:
         return {}
