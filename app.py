@@ -239,7 +239,7 @@ def main():
     # ==========================================
     # 5. メインダッシュボード (KPI)
     # ==========================================
-    st.title("⚡ Body Composition Tracker (Supabase)")
+    st.title("⚡ Body Composition Tracker")
 
     # データ取得
     raw_df = supabase_db.fetch_raw_data()
@@ -665,7 +665,7 @@ def main():
                     "Days Remaining": st.column_config.NumberColumn(
                         "Days Out", format="%d", width="small"
                     ),
-                    "2026 Date": st.column_config.TextColumn("Date", width="medium"),
+                    "2026 Date": st.column_config.TextColumn("Date", width="small"),
                     "2026 Actual": st.column_config.NumberColumn(
                         "🔥 Actual", format="%.1f kg", width="small"
                     ),
@@ -685,10 +685,10 @@ def main():
                     display_cols.append(disp_weight_col)
                     year_prefix = label.split("_")[0] if "_" in label else label
                     col_config[date_col] = st.column_config.TextColumn(
-                        f"{year_prefix} Date", width="medium"
+                        f"{year_prefix} Date", width="small"
                     )
                     col_config[disp_weight_col] = st.column_config.TextColumn(
-                        f"{year_prefix} Weight", width="medium"
+                        f"{year_prefix} Weight", width="small"
                     )
 
                 st.dataframe(
