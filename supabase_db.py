@@ -75,6 +75,7 @@ def fetch_food_list():
                 "f": float(item.get("fat") or 0),
                 "c": float(item.get("carbs") or 0),
                 "cal": int(item.get("calories") or 0),
+                "category": item.get("category") or "General",
             }
         return food_dict
     except Exception:
@@ -122,7 +123,7 @@ def add_daily_log(date_obj, weight, note, kcal=0, p=0, f=0, c=0):
 
 
 # --- 5. 食品マスタ登録 (Create) ---
-def add_food_item(name, p, f, c, cal):
+def add_food_item(name, p, f, c, cal, category="General"):
     supabase = init_connection()
     record = {
         "name": name,
@@ -130,6 +131,7 @@ def add_food_item(name, p, f, c, cal):
         "protein": float(p),
         "fat": float(f),
         "carbs": float(c),
+        "category": category,
     }
     supabase.table("food_master").upsert(record, on_conflict="name").execute()
     fetch_food_list.clear()

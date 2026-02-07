@@ -59,6 +59,19 @@ div.stButton > button {
     unsafe_allow_html=True,
 )
 
+# カテゴリーマスタ
+CATEGORY_LIST = [
+    "Carbs (Rice/Noodle)",  # 炭水化物
+    "Meat (Chicken/Beef)",  # 肉類
+    "Fish (Seafood)",  # 魚介類
+    "Egg / Dairy",  # 卵・乳製品
+    "Vegetables",  # 野菜
+    "Fruits",  # 果物
+    "Drink / Alcohol",  # 飲料
+    "Supplements",  # サプリ
+    "General",  # その他
+]
+
 
 def main():
     # ==========================================
@@ -102,11 +115,7 @@ def main():
             food_dict = supabase_db.fetch_food_list()
             set_dict = supabase_db.fetch_menu_list()
 
-            food_list = sorted(list(food_dict.keys()))
-            set_list = [f"[SET] {k}" for k in set_dict.keys()]
-            menu_options = set_list + food_list
         except Exception:
-            menu_options = []
             food_dict = {}
             set_dict = {}
 
@@ -161,10 +170,40 @@ def main():
                     }
                 )
 
-        # --- UI: 食品ピッカー ---
+        # --- UI: 食品ピッカー (Category対応版) ---
         with st.container(border=True):
             st.caption("① Select Food / Set")
-            st.selectbox("Menu", menu_options, key="picker_menu")
+
+            # 1. カテゴリー選択
+            # SETメニューがある場合は先頭に "[SET MENU]" を追加
+            cat_options = []
+            if set_dict:
+                cat_options.append("🍱 [SET MENU]")
+
+            # 食品データに含まれるカテゴリーを抽出してマージ（または固定リストを使用）
+            # ここでは固定リスト CATEGORY_LIST を使うのが綺麗です
+            cat_options.extend(CATEGORY_LIST)
+
+            selected_cat = st.selectbox("Category", cat_options, key="picker_category")
+
+            # 2. アイテム選択 (カテゴリーでフィルタリング)
+            filtered_options = []
+
+            if selected_cat == "🍱 [SET MENU]":
+                # セットメニューの場合
+                filtered_options = [f"[SET] {k}" for k in set_dict.keys()]
+            else:
+                # 通常食品の場合：選択されたカテゴリーに一致するものだけ抽出
+                filtered_options = [
+                    name
+                    for name, data in food_dict.items()
+                    if data.get("category", "General") == selected_cat
+                ]
+                filtered_options.sort()  # 名前順にソート
+
+            # アイテム選択ボックス
+            st.selectbox("Menu Item", filtered_options, key="picker_menu")
+
             st.number_input(
                 "Amount (g)",
                 0,
@@ -172,8 +211,9 @@ def main():
                 100,
                 10,
                 key="picker_amount",
-                help="単品選択時のみ有効",
+                help="単品選択時のみ有効（セット選択時は無視されます）",
             )
+
             if st.button("➕ Add to List"):
                 add_to_cart()
 
@@ -1170,6 +1210,9 @@ def main():
                     )
 
                 st.text_input("Food Name", placeholder="e.g. 白米 100g", key="new_name")
+
+                st.selectbox("Category", CATEGORY_LIST, key="new_category")
+
                 c1, c2, c3 = st.columns(3)
                 c1.number_input(
                     "P (g)",
@@ -1209,8 +1252,11 @@ def main():
                             st.session_state.new_f,
                             st.session_state.new_c,
                             st.session_state.new_cal,
+                            st.session_state.new_category,
                         )
-                        st.success(f"Added: {st.session_state.new_name}")
+                        st.success(
+                            f"Added: {st.session_state.new_name} ({st.session_state.new_category})"
+                        )
                     else:
                         st.error("Name is required")
 
@@ -1223,10 +1269,8 @@ def main():
                 # データ準備
                 try:
                     current_foods = supabase_db.fetch_food_list()
-                    food_names = list(current_foods.keys())
                     existing_menus = supabase_db.fetch_menu_list()
                 except Exception:
-                    food_names = []
                     existing_menus = {}
                     current_foods = {}
 
@@ -1252,15 +1296,49 @@ def main():
                 if "temp_set_items" not in st.session_state:
                     st.session_state.temp_set_items = []
 
-                c_sel, c_amt, c_btn = st.columns([3, 2, 1])
-                sel_food = c_sel.selectbox("Add Food", food_names, key="set_maker_food")
-                sel_amt = c_amt.number_input("g", 0, 2000, 100, 10, key="set_maker_amt")
+                # カテゴリー選択 → 食品選択
+                c_cat, c_sel, c_amt, c_btn = st.columns([2, 3, 2, 1])
+
+                # 1. カテゴリー
+                sel_cat_maker = c_cat.selectbox(
+                    "Filter",
+                    CATEGORY_LIST,
+                    key="set_maker_cat",
+                    label_visibility="collapsed",
+                    placeholder="Category",
+                )
+
+                # 2. 食品リスト（フィルタリング）
+                maker_options = [
+                    name
+                    for name, data in current_foods.items()
+                    if data.get("category", "General") == sel_cat_maker
+                ]
+                maker_options.sort()
+
+                sel_food = c_sel.selectbox(
+                    "Food",
+                    maker_options,
+                    key="set_maker_food",
+                    label_visibility="collapsed",
+                )
+
+                sel_amt = c_amt.number_input(
+                    "g",
+                    0,
+                    2000,
+                    100,
+                    10,
+                    key="set_maker_amt",
+                    label_visibility="collapsed",
+                )
 
                 if c_btn.button("Add"):
-                    st.session_state.temp_set_items.append(
-                        {"name": sel_food, "amount": sel_amt}
-                    )
-                    st.rerun()
+                    if sel_food:  # 食品が選択されている場合のみ
+                        st.session_state.temp_set_items.append(
+                            {"name": sel_food, "amount": sel_amt}
+                        )
+                        st.rerun()
 
                 # 3. List & Sort & Display
                 if st.session_state.temp_set_items:
