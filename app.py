@@ -252,8 +252,8 @@ def main():
     # CSVはローカルファイルなのでそのまま
     hist_df = supabase_db.fetch_history_csv()
 
-    with st.spinner("Analyzing..."):
-        p_val, p_fore = logic.run_prophet_model(df, cfg_goal_date)
+    with st.spinner("Analyzing with NeuralProphet (AI)..."):
+        p_val, p_fore = logic.run_neural_model(df, cfg_goal_date)
         l_val = logic.run_linear_model(df, cfg_goal_date)
 
     # KPI 計算
@@ -318,38 +318,88 @@ def main():
         ]
     )
 
-    # --- Tab 1: Simulator ---
+    # --- Tab 1: AI Forecast & Simulation ---
     with tab1:
-        st.markdown("### 📉 Simulator")
+        st.markdown("### 📉 AI Forecast & Metabolic Simulation")
+
+        # 1. データの準備
+        # 現在の体重（SMA7があればそれを、なければ生データ）
+        current_weight = (
+            df["SMA_7"].iloc[-1] if pd.notna(df["SMA_7"].iloc[-1]) else df["y"].iloc[-1]
+        )
+
+        # 現在のTDEE（計算値）
         base_tdee = (
             int(df["real_tdee_smooth"].iloc[-1])
             if pd.notna(df.get("real_tdee_smooth", pd.Series([np.nan])).iloc[-1])
             else 2400
         )
 
-        sc1, sc2, sc3 = st.columns([2, 2, 1])
-        p_in = sc1.slider("Plan Intake", 1000, 4000, 2000, 50)
-        p_out = sc2.slider("Extra Burn", 0, 1000, 0, 50)
-        sim_d = (p_in - (base_tdee + p_out)) / FAT_CALORIES_PER_KG
+        # 現在の摂取カロリー（直近平均 or デフォルト2000）
+        current_intake = (
+            int(df["c_ma"].iloc[-1])
+            if "c_ma" in df.columns
+            and pd.notna(df["c_ma"].iloc[-1])
+            and df["c_ma"].iloc[-1] > 0
+            else 2000
+        )
 
+        # 3. シミュレーションの実行 (代謝適応モデル)
+        sim_df = logic.run_metabolic_simulation(
+            df, cfg_goal_date, current_weight, base_tdee, current_intake
+        )
+
+        # --- KPI表示エリア ---
+        # 到達予測日の算出 (AI予測に基づく外挿計算あり)
         est_date_str = "Unknown"
+        sub_label = "(Not reached)"
+
+        # 1. まず、グラフの表示範囲内（目標日まで）に達成するかチェック
         future_hit = p_fore[
             (p_fore["ds"] > pd.to_datetime(date.today()))
             & (p_fore["yhat"] <= cfg_goal_weight)
         ]
+
         if not future_hit.empty:
+            # 範囲内で達成する場合
             hit_date = future_hit["ds"].iloc[0]
             est_date_str = hit_date.strftime("%m/%d")
+            sub_label = "(AI Forecast)"
         else:
-            if curr > cfg_goal_weight and sim_d < 0:
-                est_days = int((curr - cfg_goal_weight) / abs(sim_d))
-                est_date_str = (date.today() + timedelta(days=est_days)).strftime(
-                    "%m/%d"
-                )
-            else:
-                est_date_str = "∞"
+            # 2. 範囲内で達成しない場合 → 「今のペースならいつ？」を外挿計算 (Extrapolation)
+            current_pred = p_fore["yhat"].iloc[-1]
+            last_date = p_fore["ds"].iloc[-1]
 
-        with sc3:
+            # 直近14日間の傾き（kg/day）を取得してペース判定
+            slope = p_fore["yhat"].diff().tail(14).mean()
+
+            # 減量ペースが維持されている場合（傾きがマイナス）
+            if slope < -0.005:
+                rem_weight = current_pred - cfg_goal_weight
+                days_needed = int(rem_weight / abs(slope))
+
+                # 理論上の達成日を算出
+                theoretical_date = last_date + timedelta(days=days_needed)
+
+                # 年またぎを考慮して年付きフォーマット
+                est_date_str = theoretical_date.strftime("%Y/%m/%d")
+                sub_label = "(Extrapolated)"
+            else:
+                # ペースが停滞、または増えている場合
+                est_date_str = "∞"
+                sub_label = "(Stagnant/Increasing)"
+
+        col_tdee, col_est = st.columns([1, 1])
+
+        with col_tdee:
+            st.metric(
+                "Current TDEE",
+                f"{base_tdee} kcal",
+                f"Intake: {current_intake} kcal",
+                help="直近の体重減少ペースから逆算された実質代謝量",
+            )
+
+        with col_est:
             st.markdown(
                 f"""
                 <div style="
@@ -357,82 +407,75 @@ def main():
                     padding: 10px 20px;
                     border-radius: 10px;
                     border-left: 5px solid #F59E0B;
-                    margin-bottom: 20px;">
-                    <p style="margin: 0; font-size: 0.8rem; color: #888;">AI Est. Date</p>
-                    <p style="margin: 0; font-size: 1.5rem; font-weight: bold; color: #FFF;">
-                        {est_date_str} <span style="font-size: 1rem; font-weight: normal;">(Sim)</span>
+                    text-align: center;">
+                    <p style="margin: 0; font-size: 0.8rem; color: #888;">AI Goal Date</p>
+                    <p style="margin: 0; font-size: 1.8rem; font-weight: bold; color: #FFF;">
+                        {est_date_str} <span style="font-size: 1rem; font-weight: normal; color: #AAA;">{sub_label}</span>
                     </p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-        # グラフ描画
+        # --- グラフ描画 ---
         fig = go.Figure()
-        sim_days = (cfg_goal_date - date.today()).days + 14
-        d_ls = [date.today() + timedelta(days=x) for x in range(sim_days)]
-        w_ls = [curr + (sim_d * x) for x in range(sim_days)]
 
-        fig.add_trace(
-            go.Scatter(
-                x=d_ls,
-                y=w_ls,
-                mode="lines",
-                name="Sim Plan (Ref)",
-                line=dict(color="rgba(255, 255, 255, 0.5)", width=2, dash="dot"),
-                hovertemplate="%{x|%Y/%m/%d}<br>Plan: %{y:.1f}kg<extra></extra>",
-            )
-        )
-
+        # A. NeuralProphet Forecast (AI) - Orange Line
         fig.add_trace(
             go.Scatter(
                 x=p_fore["ds"],
                 y=p_fore["yhat"],
                 mode="lines",
-                name="Forecast (AI)",
-                line=dict(color="rgba(255, 136, 0, 0.7)", width=4),
-                hovertemplate="%{x|%Y/%m/%d}<br>Weight: %{y:.1f}kg<extra></extra>",
+                name="AI Trend (Ideal)",
+                line=dict(color="rgba(255, 136, 0, 0.9)", width=3),
+                hovertemplate="<b>AI Forecast</b><br>%{x|%m/%d}: %{y:.1f}kg<extra></extra>",
             )
         )
 
+        # B. Metabolic Simulation (Math) - White Dashed Line
+        if not sim_df.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=sim_df["ds"],
+                    y=sim_df["yhat_sim"],
+                    mode="lines",
+                    name="Sim (Metabolic Drop)",
+                    line=dict(color="rgba(200, 200, 200, 0.6)", width=2, dash="dash"),
+                    hovertemplate="<b>Simulation</b><br>(Stagnation Risk)<br>%{y:.1f}kg<extra></extra>",
+                )
+            )
+
+        # C. SMA7 (Trend) - Cyan Line
         if pd.notna(df["SMA_7"].iloc[-1]):
             fig.add_trace(
                 go.Scatter(
                     x=df["ds"],
                     y=df["SMA_7"],
                     mode="lines",
-                    name="SMA7",
-                    line=dict(color="#00BFFF", width=3),
-                    hovertemplate="%{x|%Y/%m/%d}<br>Avg: %{y:.1f}kg<extra></extra>",
+                    name="7-Day Avg",
+                    line=dict(color="#00BFFF", width=2, dash="solid"),
+                    hovertemplate="Avg: %{y:.1f}kg<extra></extra>",
                 )
             )
 
+        # D. Actual Data - Blue Dots
         fig.add_trace(
             go.Scatter(
                 x=df["ds"],
                 y=df["y"],
                 mode="markers",
-                name="Raw",
+                name="Actual",
                 marker=dict(color="rgba(0, 191, 255, 0.4)", size=6),
-                hovertemplate="%{x|%Y-%m-%d}<br>Raw: %{y:.1f}kg<extra></extra>",
+                hovertemplate="Raw: %{y:.1f}kg<extra></extra>",
             )
         )
 
-        min_date = df["ds"].min()
-        max_date = d_ls[-1]
-        month_starts = pd.date_range(start=min_date, end=max_date, freq="MS")
-
-        for d in month_starts:
-            fig.add_vline(
-                x=d,
-                line_width=1,
-                line_dash="dot",
-                line_color="rgba(255, 255, 255, 0.15)",
-            )
-
+        # 補助線 (Goal)
         fig.add_hline(
             y=cfg_goal_weight, line_dash="dot", line_color="red", annotation_text="Goal"
         )
+
+        # 補助線 (Monthly Target) - 復活
         if cfg_monthly_target > 0:
             fig.add_hline(
                 y=cfg_monthly_target,
@@ -442,36 +485,49 @@ def main():
             )
 
         target_date_ts = pd.to_datetime(cfg_goal_date)
-        latest_data_date = df["ds"].max()
-        start_date = latest_data_date - pd.DateOffset(months=1)
         graph_end_date = target_date_ts + pd.DateOffset(days=15)
+        start_view_date = df["ds"].max() - pd.DateOffset(days=45)  # 直近45日を表示
 
-        yaxis_min = float(cfg_goal_weight) - 2.0
-        yaxis_max = df["y"].max() + 2.5
+        # 月ごとの縦線
+        month_starts = pd.date_range(
+            start=df["ds"].min(), end=graph_end_date, freq="MS"
+        )
+        for d in month_starts:
+            fig.add_vline(
+                x=d,
+                line_width=1,
+                line_dash="dot",
+                line_color="rgba(255, 255, 255, 0.1)",
+            )
+
+        # Y軸の範囲計算
+        y_max = df["y"].max() + 1.0
+        y_min = cfg_goal_weight - 2.0
 
         fig.update_layout(
             height=500,
             template="plotly_dark",
-            margin=dict(l=20, r=20, t=20, b=20),
             legend=dict(orientation="h", y=1.05),
+            margin=dict(l=20, r=20, t=20, b=20),
             xaxis=dict(
-                range=[start_date, graph_end_date],
+                range=[start_view_date, graph_end_date],
                 type="date",
                 rangeslider=dict(visible=True),
-                showgrid=True,
                 gridcolor="rgba(128,128,128, 0.2)",
             ),
             yaxis=dict(
-                range=[yaxis_min, yaxis_max],
+                range=[y_min, y_max],
                 tickformat=".1f",
-                dtick=2.5,
+                dtick=2.0,  # ◀◀◀ 2kg刻みに設定
                 showgrid=True,
                 gridcolor="rgba(128,128,128, 0.2)",
+                title="Weight (kg)",
             ),
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("#### 📋 Recent Weight Logs")
+        # --- 履歴テーブル (Recent Logs) ---
+        st.markdown("#### 📋 Recent Logs")
         table_cols = ["ds", "y"]
         if "Calories" in df.columns:
             table_cols.append("Calories")
@@ -499,7 +555,7 @@ def main():
             column_config={
                 "ds": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
                 "y": "Weight",
-                "Diff": "ΔWeight",
+                "Diff": "Δ",
                 "Calories": "Intake",
             },
             hide_index=True,
@@ -776,8 +832,10 @@ def main():
                     x=season_stats["Season"],
                     y=season_stats["MinWeight"],
                     text=season_stats.apply(
-                        lambda x: f"{x['MinWeight']:.1f}kg"
-                        + (f" ({x['Delta']:+.1f})" if pd.notna(x["Delta"]) else ""),
+                        lambda x: (
+                            f"{x['MinWeight']:.1f}kg"
+                            + (f" ({x['Delta']:+.1f})" if pd.notna(x["Delta"]) else "")
+                        ),
                         axis=1,
                     ),
                     textposition="auto",
@@ -986,6 +1044,44 @@ def main():
                     "C_disp": st.column_config.TextColumn("", width="small"),
                 },
                 hide_index=True,
+            )
+
+        # ▼▼▼ 追加部分: XGBoost Factor Analysis ▼▼▼
+        st.markdown("---")
+        st.subheader("🤖 AI Factor Analysis (XGBoost)")
+        st.caption("「何が体重減少に最も寄与しているか」をAIが判定します")
+
+        imp_df = logic.run_xgboost_importance(df)
+
+        if imp_df is not None:
+            # 棒グラフで重要度を表示
+            fig_imp = go.Figure(
+                go.Bar(
+                    x=imp_df["Importance"],
+                    y=imp_df["Feature"],
+                    orientation="h",
+                    marker=dict(color="rgba(50, 171, 96, 0.7)"),
+                )
+            )
+
+            fig_imp.update_layout(
+                title="Impact on Weight Fluctuation",
+                xaxis_title="Importance Score",
+                yaxis=dict(autorange="reversed"),  # 上位を上に
+                height=300,
+                template="plotly_dark",
+                margin=dict(l=0, r=0, t=30, b=0),
+            )
+            st.plotly_chart(fig_imp, use_container_width=True)
+
+            # 解釈コメント
+            top_factor = imp_df.iloc[0]["Feature"]
+            st.info(
+                f"💡 AIの分析によると、現在の体重変動に最も影響を与えているのは **「{top_factor}」** です。"
+            )
+        else:
+            st.warning(
+                "データ不足のため、詳細分析にはまだ時間がかかります（最低14日分のデータが必要です）。"
             )
 
     # --- Tab 5: Metabolism ---
@@ -1271,8 +1367,9 @@ def main():
                             else:
                                 st.error("Name and items required")
 
-    # --- Tab 7: Settings ---
+    # --- Tab 7: Settings & Data Export ---
     with tab7:
+        # 1. 既存の設定フォーム
         st.subheader("⚙️ System Settings")
         st.caption("目標やフェーズの設定変更はこちらで行います。")
         with st.container(border=True):
@@ -1315,6 +1412,70 @@ def main():
         st.info(
             "※ ここで設定した「Goal Date」や「Target」は、シミュレーター(Tab 1)の予測線に反映されます。"
         )
+
+        st.divider()
+        st.subheader("📤 Data Export")
+        st.caption(
+            "指定した期間の記録（体重・摂取カロリー・PFC）をCSV形式でダウンロードします。"
+        )
+
+        with st.container(border=True):
+            col_date1, col_date2 = st.columns(2)
+
+            # デフォルト: 今月の1日 〜 今日
+            today = date.today()
+            this_month_start = today.replace(day=1)
+
+            ex_start = col_date1.date_input(
+                "Start Date", value=this_month_start, key="ex_start"
+            )
+            ex_end = col_date2.date_input("End Date", value=today, key="ex_end")
+
+            if ex_start > ex_end:
+                st.error("⚠️ 開始日は終了日より前の日付を指定してください。")
+            else:
+                # データのフィルタリング (raw_dfを使用)
+                # raw_df["ds"] は datetime型なので、.dt.date で日付比較
+                mask = (raw_df["ds"].dt.date >= ex_start) & (
+                    raw_df["ds"].dt.date <= ex_end
+                )
+                export_df = raw_df.loc[mask].copy()
+
+                if not export_df.empty:
+                    # 必要なカラムのみ抽出・リネーム
+                    # DBのカラム構成: ds, y, Calories, Protein, Fat, Carbs
+                    export_df = export_df[
+                        ["ds", "y", "Calories", "Protein", "Fat", "Carbs"]
+                    ]
+                    export_df.columns = [
+                        "Date",
+                        "Weight(kg)",
+                        "Calories(kcal)",
+                        "Protein(g)",
+                        "Fat(g)",
+                        "Carbs(g)",
+                    ]
+
+                    # 日付順にソート
+                    export_df = export_df.sort_values("Date")
+
+                    # CSV変換
+                    csv_data = export_df.to_csv(index=False).encode("utf-8")
+
+                    # ダウンロードボタン表示
+                    c_info, c_btn = st.columns([2, 1])
+                    with c_info:
+                        st.write(f"📊 対象データ: **{len(export_df)}** 件")
+                    with c_btn:
+                        st.download_button(
+                            label="📥 Download CSV",
+                            data=csv_data,
+                            file_name=f"bodymake_log_{ex_start}_{ex_end}.csv",
+                            mime="text/csv",
+                            type="primary",
+                        )
+                else:
+                    st.warning("⚠️ 指定された期間のデータが見つかりませんでした。")
 
 
 if __name__ == "__main__":

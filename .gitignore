@@ -6,3 +6,7 @@ __pycache__/
 .DS_Store
 venv/
 .devcontainer/
+
+# NeuralProphet / PyTorch Lightning artifacts
+lightning_logs/
+*.ckpt
